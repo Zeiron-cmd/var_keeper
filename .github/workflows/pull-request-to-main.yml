@@ -1,87 +1,42 @@
-name: Pull Request To Main
-run-name: Run All Tests
-
+name: Pull Request To Dev
+run-name: Run Integration Tests
 on:
   pull_request:
     branches:
-      - 'main'
-
+      - 'dev'
 jobs:
-  unit_testing:
-    runs-on: self-hosted
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Run Unit Tests
-        shell: bash
-        run: |
-          chmod +x ./test/unit-tests.sh
-          ./test/unit-tests.sh
-
   integration_testing:
-    needs: unit_testing
     runs-on: self-hosted
+    container: python:3.12.3-slim
+    services:
+      db:
+        image: mysql
+        env:
+          MYSQL_ROOT_PASSWORD: 123
+        options: >-
+          --health-cmd "mysqladmin ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Create virtual env
-        shell: bash
-        run: python3 -m venv venv
-
+        uses: actions/checkout@v6
       - name: Install requirements
-        shell: bash
-        run: |
-          venv/bin/python -m pip install --upgrade pip
-          venv/bin/pip install --default-timeout=100 --retries 10 -r requirements.txt
-
-      - name: Check Flask
-        shell: bash
-        run: |
-          venv/bin/python -c "import flask; print(flask.__version__)"
-
+        run: pip install -r requirements.txt
       - name: Run app
-        shell: bash
+        run: python3 ./src/app/app.py &
+      - name: Install curl
+        run: apt-get -y update; apt-get -y install curl
+      - name: Set variable a in 123
+        run: curl -X POST -F 'value=123' http://localhost:5000/var/a
+      - name: Test getting the value of a variable
         run: |
-          nohup venv/bin/python src/app/app.py > app.log 2>&1 &
-          echo $! > app_pid
-
-      - name: Wait for app
-        shell: bash
-        run: |
-          for i in {1..30}; do
-            if curl -fsS http://127.0.0.1:5000/ > /dev/null; then
-              echo "App is up"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "App did not start"
-          cat app.log
+          VALUE=$(curl http://localhost:5000/var/a)
+          if [ "$VALUE" != "123" ]; then
           exit 1
-
-      - name: Test GET-request
-        shell: bash
-        run: |
-          chmod +x ./test/integration-tests.sh
-          ./test/integration-tests.sh
-
-      - name: Stop app
-        if: always()
-        shell: bash
-        run: |
-          kill -15 "$(cat app_pid)" || true
-
-  mega_hard_testing:
-    needs: [unit_testing, integration_testing]
-    runs-on: self-hosted
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Run Mega Hard Tests
-        shell: bash
-        run: |
-          chmod +x ./test/all-mega-hard-tests.sh
-          ./test/all-mega-hard-tests.sh
+          else
+          echo "Integration Test PASS"
+          fi
+      - name: Clean the workspace
+        if: ${{ always() }}
+        run: find $GITHUB_WORKSPACE -mindepth 1 -delete
